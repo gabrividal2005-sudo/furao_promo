@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Lopes Promoções",
+    "channel": "LopesPromo",
+    "enabled": true,
+
+    "min_discount_percent": 0,
+    "min_price": 0,
+    "max_price": "",
+
+    "include_keywords": [],
+    "exclude_keywords": [
+      "esgotado",
+      "encerrada",
+      "expirada"
+    ],
+
+    "max_posts": 30
+  },
+
+  {
+    "name": "EXEMPLO Hardware",
+    "channel": "SEU_CANAL_AQUI",
+    "enabled": false,
+
+    "min_discount_percent": 10,
+    "min_price": 100,
+    "max_price": 5000,
+
+    "include_keywords": [
+      "gpu",
+      "rtx",
+      "monitor",
+      "ssd",
+      "ram",
+      "teclado",
+      "mouse",
+      "headset"
+    ],
+
+    "exclude_keywords": [],
+    "max_posts": 30
+  }
+]
