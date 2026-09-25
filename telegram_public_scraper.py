@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import psycopg2
 import psycopg2.extras
@@ -535,6 +535,65 @@ TITLE_SUFFIX_RE = re.compile(
 )
 
 
+def resolve_final_url(client: "HttpClient", url: str, max_hops: int = 6) -> str:
+    """Follow only the redirect chain (shortener -> retailer product page)
+    without loading the final page's body. Redirect hops from link
+    shorteners are almost never protected by anti-bot walls even when the
+    landing page itself is, so this survives blocks that defeat
+    fetch_title_from_link's direct GET."""
+    current = url
+    for _ in range(max_hops):
+        try:
+            r = client.session.head(
+                current, timeout=5, allow_redirects=False
+            )
+            if r.status_code == 405:  # some hosts reject HEAD
+                r = client.session.get(
+                    current, timeout=5, allow_redirects=False, stream=True
+                )
+        except Exception:
+            return current
+
+        if r.status_code in (301, 302, 303, 307, 308):
+            location = r.headers.get("Location")
+            if not location:
+                return current
+            current = urljoin(current, location)
+            continue
+        return current
+    return current
+
+
+_SLUG_NUMERIC_RE = re.compile(r"^[0-9]+$")
+
+
+def title_from_url_slug(url: str) -> str | None:
+    """Product URLs on most marketplaces embed the product name as a
+    hyphenated slug in the path (e.g. .../placa-de-video-msi-rtx-5060/p/
+    MLB123). Used only when we cannot read the page itself."""
+    try:
+        segments = [s for s in urlparse(url).path.split("/") if s]
+    except Exception:
+        return None
+
+    best = None
+    for seg in segments:
+        if "-" not in seg and "_" not in seg:
+            continue
+        words = [w for w in re.split(r"[-_]+", seg) if w]
+        words = [w for w in words if not _SLUG_NUMERIC_RE.match(w)]
+        if len(words) < 3:
+            continue
+        candidate = " ".join(words)
+        if best is None or len(candidate) > len(best):
+            best = candidate
+
+    if not best:
+        return None
+    best = best.strip()
+    return (best[:1].upper() + best[1:])[:240]
+
+
 def fetch_title_from_link(client: "HttpClient", url: str) -> str | None:
     """Last-resort fallback, used only when Telegram itself produced no
     link preview. A single lenient attempt (no retries, no raise on
@@ -755,6 +814,19 @@ def extract_post(
         fetched_title = fetch_title_from_link(client, links[0])
         if fetched_title:
             title = fetched_title
+
+    # Fallback 3: página bloqueada (comum em Mercado Livre/Amazon a partir
+    # de servidores de nuvem). O redirecionamento do link curto até a
+    # página final quase sempre funciona mesmo quando a página em si é
+    # bloqueada — a própria URL final costuma trazer o nome do produto.
+    if title == "Oferta" and links:
+        try:
+            final_url = resolve_final_url(client, links[0])
+            slug_title = title_from_url_slug(final_url)
+            if slug_title:
+                title = slug_title
+        except Exception as exc:
+            logging.debug("Falha ao resolver URL final de %s: %s", links[0], exc)
 
     # Only calculate a discount when the post explicitly states both prices.
     # A single "Valor: R$328" remains exactly that: current price only.
