@@ -510,6 +510,24 @@ def build_product_title(text: str, offer_links: list[str]) -> str:
     return "Oferta"
 
 
+def extract_link_preview_title(post) -> str | None:
+    """Telegram resolves a link preview (site name, title, image) for URLs
+    shared in a post, and that HTML is already sitting right there in the
+    public channel page. Reading it is far more reliable than fetching the
+    retailer's page ourselves, since stores like Mercado Livre/Amazon
+    commonly block scraping bots while Telegram's own preview fetch is
+    never blocked."""
+    node = post.select_one(
+        ".tgme_widget_message_link_preview .link_preview_title, "
+        ".link_preview_title"
+    )
+    if node:
+        candidate = clean_text(node.get_text(" ", strip=True))
+        if candidate:
+            return candidate[:240]
+    return None
+
+
 TITLE_SUFFIX_RE = re.compile(
     r"\s*[\|\-–—:]\s*(?:Mercado Livre|Amazon\.com\.br|Amazon|Shopee|"
     r"AliExpress|Magazine Luiza|Magalu|Americanas|Casas Bahia)\s*$",
@@ -518,15 +536,17 @@ TITLE_SUFFIX_RE = re.compile(
 
 
 def fetch_title_from_link(client: "HttpClient", url: str) -> str | None:
-    """Best-effort fallback: some posts only have price/coupon/link, with
-    the product name shown solely inside the image. When that happens,
-    resolve the offer link and pull the product name from its og:title
-    (or <title>) so the Discord embed still shows a real product name
-    instead of the generic "Oferta" placeholder."""
+    """Last-resort fallback, used only when Telegram itself produced no
+    link preview. A single lenient attempt (no retries, no raise on
+    4xx/5xx) since retailer sites frequently block non-browser requests —
+    failing fast here matters more than squeezing out one extra title."""
     try:
-        resp = client.get(url, timeout=8)
+        resp = client.session.get(url, timeout=6, allow_redirects=True)
     except Exception as exc:
         logging.debug("Não foi possível resolver título de %s: %s", url, exc)
+        return None
+
+    if not resp.ok or "text/html" not in resp.headers.get("Content-Type", ""):
         return None
 
     try:
@@ -721,8 +741,16 @@ def extract_post(
     title = build_product_title(text, links)
     description = build_product_description(text, title, links)
 
-    # Fallback: posts que só trazem preço/cupom/link (nome do produto só
-    # aparece na imagem) caem aqui. Busca o nome real na página do link.
+    # Fallback 1: post só tem preço/cupom/link, sem nome do produto no
+    # texto. O Telegram já resolveu um preview do link (título, site,
+    # imagem) — lemos direto do HTML, sem precisar acessar o site da loja.
+    if title == "Oferta":
+        preview_title = extract_link_preview_title(post)
+        if preview_title:
+            title = preview_title
+
+    # Fallback 2: raro o Telegram não gerar preview. Tenta uma vez, sem
+    # travar o ciclo caso a loja bloqueie a requisição.
     if title == "Oferta" and links:
         fetched_title = fetch_title_from_link(client, links[0])
         if fetched_title:
