@@ -29,6 +29,23 @@
 
     "include_keywords": [],
 
+    "exclude_keywords": [
+      "placa de video"
+    ],
+    "max_posts": 30
+  },
+
+  {
+    "name": "Tecnoart Placas",
+    "channel": "placasdevideotecnoart",
+    "enabled": true,
+
+    "min_discount_percent": 0,
+    "min_price": 0,
+    "max_price": "",
+
+    "include_keywords": [],
+
     "exclude_keywords": [],
     "max_posts": 30
   }
