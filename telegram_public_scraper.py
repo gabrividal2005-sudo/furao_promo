@@ -564,13 +564,14 @@ def resolve_final_url(client: "HttpClient", url: str, max_hops: int = 6) -> str:
     return current
 
 
-_SLUG_NUMERIC_RE = re.compile(r"^[0-9]+$")
+_SLUG_JUNK_RE = re.compile(r"^(?:i\.)?\d+(?:\.\d+)*$", re.IGNORECASE)
 
 
 def title_from_url_slug(url: str) -> str | None:
     """Product URLs on most marketplaces embed the product name as a
     hyphenated slug in the path (e.g. .../placa-de-video-msi-rtx-5060/p/
-    MLB123). Used only when we cannot read the page itself."""
+    MLB123, or Shopee's .../nome-do-produto-i.123456789.987654321). Used
+    only when we cannot read the page itself."""
     try:
         segments = [s for s in urlparse(url).path.split("/") if s]
     except Exception:
@@ -581,7 +582,7 @@ def title_from_url_slug(url: str) -> str | None:
         if "-" not in seg and "_" not in seg:
             continue
         words = [w for w in re.split(r"[-_]+", seg) if w]
-        words = [w for w in words if not _SLUG_NUMERIC_RE.match(w)]
+        words = [w for w in words if not _SLUG_JUNK_RE.match(w) and len(w) > 1]
         if len(words) < 3:
             continue
         candidate = " ".join(words)
