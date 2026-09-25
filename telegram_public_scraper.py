@@ -500,7 +500,8 @@ def build_product_title(text: str, offer_links: list[str]) -> str:
         if re.match(r"^(?:https?://|www\.)", low):
             continue
         candidate = re.sub(
-            r"(?i)\b(?:de|por|agora|valor|preço|preco)\b\s*[:\-]?\s*R?\$?\s*[\d\.\,]+",
+            r"(?i)\b(?:de|por|agora|valor|preço|preco)\b\s*[:\-]?\s*"
+            r"(?:R\$\s*[\d\.,]+|\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})",
             " ",
             line,
         )
@@ -775,12 +776,21 @@ def extract_post(
 
     text_node = post.select_one(".tgme_widget_message_text")
     if text_node:
-        text = clean_text(text_node.get_text("\n", strip=True))
         raw_html = str(text_node)
+        raw_lines = text_node.get_text("\n", strip=True).split("\n")
     else:
         # Some layouts may store text in other nodes.
-        text = clean_text(post.get_text("\n", strip=True))
         raw_html = str(post)
+        raw_lines = post.get_text("\n", strip=True).split("\n")
+
+    # clean_text() collapses ALL whitespace (including newlines) into a
+    # single space, so it must be applied per-line here — running it on
+    # the whole block first would merge title/price/link into one line
+    # and break every line-based filter downstream (build_product_title,
+    # price/coupon parsing context, etc).
+    text = "\n".join(
+        cleaned for line in raw_lines if (cleaned := clean_text(line))
+    )
 
     if not text:
         return None
