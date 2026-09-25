@@ -1016,12 +1016,12 @@ class DiscordNotifier:
         )
 
     def build_embed(self, promo: Promo) -> dict[str, Any]:
-        # The product name is the first thing users see; the description below
-        # is cleaned from coupon/price/group-link metadata.
+        # O nome do produto já é o título do embed. Nada mais precisa
+        # aparecer abaixo dele — preço, cupom, foto e link têm seus
+        # próprios campos logo em seguida.
         embed: dict[str, Any] = {
             "title": promo.title[:256],
             "url": promo.links[0] if promo.links else promo.post_url,
-            "description": promo.description[:2048] or "Oferta encontrada.",
             "fields": [],
             "footer": {
                 "text": f"Fonte: {promo.source_name} • Telegram público"
