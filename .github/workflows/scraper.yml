@@ -2,8 +2,12 @@ name: Scraper Telegram -> Discord
 
 on:
   schedule:
-    # Roda todo início de hora (horário UTC). Ex: 00:00, 01:00, 02:00...
-    - cron: "0 * * * *"
+    # Roda todo início de hora, no minuto 5 (horário UTC): 00:05, 01:05...
+    # Evitar o minuto 0 é importante: é o horário de pico de todos os
+    # workflows agendados do GitHub rodando ao mesmo tempo, causando
+    # atrasos grandes ou execuções puladas. Minutos "quebrados" (5, 12,
+    # 23...) sofrem bem menos disso.
+    - cron: "5 * * * *"
   # Permite disparar manualmente pela aba "Actions" no GitHub, para testar
   workflow_dispatch:
 
