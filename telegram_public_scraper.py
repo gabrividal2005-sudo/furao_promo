@@ -829,6 +829,15 @@ def extract_post(
         except Exception as exc:
             logging.debug("Falha ao resolver URL final de %s: %s", links[0], exc)
 
+    # Log de diagnóstico: se mesmo assim nada funcionou, mostra o texto
+    # bruto extraído do post nos logs, para investigar por que nenhuma
+    # linha foi reconhecida como nome do produto.
+    if title == "Oferta":
+        logging.warning(
+            "[%s] post %s ficou como 'Oferta'. Texto bruto: %r | links: %r",
+            source_name, post_id, text, links,
+        )
+
     # Only calculate a discount when the post explicitly states both prices.
     # A single "Valor: R$328" remains exactly that: current price only.
     discount = None
