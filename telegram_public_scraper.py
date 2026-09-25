@@ -487,6 +487,24 @@ def choose_offer_links(links: list[str], channel_username: str) -> list[str]:
     return clean[:3]
 
 
+EMOJI_RE = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002600-\U000027BF"
+    "\U00002B00-\U00002BFF"
+    "\U00002190-\U000021FF"
+    "\uFE0F"
+    "]"
+)
+
+LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+
+MID_LINE_CUT_RE = re.compile(
+    r"R\$|\b(?:Cupom|Valor|Pre[cç]o|Link|Mod)\s*:",
+    re.IGNORECASE,
+)
+
+
 def build_product_title(text: str, offer_links: list[str]) -> str:
     lines = [clean_text(x) for x in (text or "").splitlines() if clean_text(x)]
     for line in lines:
@@ -499,11 +517,28 @@ def build_product_title(text: str, offer_links: list[str]) -> str:
             continue
         if re.match(r"^(?:https?://|www\.)", low):
             continue
+        if not LETTER_RE.search(line):
+            # Linha só com emoji/símbolo (ex: "🔥" sozinho antes do nome do
+            # produto numa linha separada) — não é o nome do produto.
+            continue
+
+        candidate = line
+
+        # Corta a linha assim que aparecer preço, rótulo (Cupom:/Mod:/
+        # Valor:/Link:) ou um emoji — sinal de que o nome do produto
+        # terminou e começou o preço/cupom/menu de outros canais.
+        cut_at = [m.start() for m in MID_LINE_CUT_RE.finditer(candidate)]
+        emoji_match = EMOJI_RE.search(candidate)
+        if emoji_match:
+            cut_at.append(emoji_match.start())
+        if cut_at:
+            candidate = candidate[: min(cut_at)]
+
         candidate = re.sub(
             r"(?i)\b(?:de|por|agora|valor|preço|preco)\b\s*[:\-]?\s*"
             r"(?:R\$\s*[\d\.,]+|\d{1,3}(?:\.\d{3})+,\d{2}|\d+,\d{2})",
             " ",
-            line,
+            candidate,
         )
         candidate = re.sub(r"\s+", " ", candidate).strip(" -:|")
         if candidate:
