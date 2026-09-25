@@ -19,13 +19,13 @@
   },
 
   {
-    "name": "EXEMPLO Hardware",
-    "channel": "SEU_CANAL_AQUI",
-    "enabled": false,
+    "name": "TecnoArt",
+    "channel": "tecnoarthardware",
+    "enabled": true,
 
-    "min_discount_percent": 10,
-    "min_price": 100,
-    "max_price": 5000,
+    "min_discount_percent": 0,
+    "min_price": 0,
+    "max_price": "",
 
     "include_keywords": [
       "gpu",
@@ -35,7 +35,9 @@
       "ram",
       "teclado",
       "mouse",
-      "headset"
+      "headset",
+      "processador",
+      "placa"
     ],
 
     "exclude_keywords": [],
