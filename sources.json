@@ -27,18 +27,7 @@
     "min_price": 0,
     "max_price": "",
 
-    "include_keywords": [
-      "gpu",
-      "rtx",
-      "monitor",
-      "ssd",
-      "ram",
-      "teclado",
-      "mouse",
-      "headset",
-      "processador",
-      "placa"
-    ],
+    "include_keywords": [],
 
     "exclude_keywords": [],
     "max_posts": 30
