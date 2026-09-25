@@ -35,7 +35,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -44,6 +43,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
+import psycopg2
+import psycopg2.extras
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -52,7 +53,6 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 LOG_DIR = ROOT / "logs"
-DB_PATH = DATA_DIR / "promos.db"
 SOURCES_PATH = ROOT / "sources.json"
 
 DEFAULT_INTERVAL = 60
@@ -130,105 +130,120 @@ def setup_logging() -> None:
 
 
 class Database:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(path))
-        self.conn.row_factory = sqlite3.Row
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_name TEXT NOT NULL,
-                channel_username TEXT NOT NULL,
-                post_id INTEGER NOT NULL,
-                post_url TEXT NOT NULL,
-                title TEXT NOT NULL,
-                current_price REAL,
-                original_price REAL,
-                discount_percent REAL,
-                coupon TEXT,
-                image_url TEXT,
-                first_seen_at TEXT NOT NULL,
-                UNIQUE(channel_username, post_id)
-            );
+    """PostgreSQL-backed storage (Railway Postgres or any Postgres URL).
 
-            CREATE TABLE IF NOT EXISTS sent (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fingerprint TEXT NOT NULL UNIQUE,
-                channel_username TEXT NOT NULL,
-                post_id INTEGER NOT NULL,
-                sent_at TEXT NOT NULL
-            );
+    Keeps the exact same public interface the rest of the script already
+    relies on (is_seen / save_post / was_sent / mark_sent / close), so
+    nothing outside this class needed to change.
+    """
 
-            CREATE INDEX IF NOT EXISTS idx_sent_fingerprint
-            ON sent(fingerprint);
+    def __init__(self, dsn: str):
+        self.conn = psycopg2.connect(dsn)
+        self.conn.autocommit = False
+        self._init_schema()
 
-            CREATE INDEX IF NOT EXISTS idx_posts_channel_post
-            ON posts(channel_username, post_id);
-            """
-        )
+    def _init_schema(self) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS posts (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_name TEXT NOT NULL,
+                    channel_username TEXT NOT NULL,
+                    post_id BIGINT NOT NULL,
+                    post_url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    current_price DOUBLE PRECISION,
+                    original_price DOUBLE PRECISION,
+                    discount_percent DOUBLE PRECISION,
+                    coupon TEXT,
+                    image_url TEXT,
+                    first_seen_at TIMESTAMPTZ NOT NULL,
+                    UNIQUE (channel_username, post_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS sent (
+                    id BIGSERIAL PRIMARY KEY,
+                    fingerprint TEXT NOT NULL UNIQUE,
+                    channel_username TEXT NOT NULL,
+                    post_id BIGINT NOT NULL,
+                    sent_at TIMESTAMPTZ NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sent_fingerprint
+                ON sent(fingerprint);
+
+                CREATE INDEX IF NOT EXISTS idx_posts_channel_post
+                ON posts(channel_username, post_id);
+                """
+            )
         self.conn.commit()
 
     def is_seen(self, channel: str, post_id: int) -> bool:
-        row = self.conn.execute(
-            """
-            SELECT 1 FROM posts
-            WHERE channel_username = ? AND post_id = ?
-            LIMIT 1
-            """,
-            (channel, post_id),
-        ).fetchone()
-        return row is not None
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM posts
+                WHERE channel_username = %s AND post_id = %s
+                LIMIT 1
+                """,
+                (channel, post_id),
+            )
+            return cur.fetchone() is not None
 
     def save_post(self, promo: Promo) -> None:
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO posts (
-                source_name, channel_username, post_id, post_url,
-                title, current_price, original_price, discount_percent,
-                coupon, image_url, first_seen_at
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO posts (
+                    source_name, channel_username, post_id, post_url,
+                    title, current_price, original_price, discount_percent,
+                    coupon, image_url, first_seen_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (channel_username, post_id) DO NOTHING
+                """,
+                (
+                    promo.source_name,
+                    promo.channel_username,
+                    promo.post_id,
+                    promo.post_url,
+                    promo.title,
+                    promo.current_price,
+                    promo.original_price,
+                    promo.discount_percent,
+                    promo.coupon,
+                    promo.image_url,
+                    utc_iso(),
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                promo.source_name,
-                promo.channel_username,
-                promo.post_id,
-                promo.post_url,
-                promo.title,
-                promo.current_price,
-                promo.original_price,
-                promo.discount_percent,
-                promo.coupon,
-                promo.image_url,
-                utc_iso(),
-            ),
-        )
         self.conn.commit()
 
     def was_sent(self, fingerprint: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM sent WHERE fingerprint = ? LIMIT 1",
-            (fingerprint,),
-        ).fetchone()
-        return row is not None
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM sent WHERE fingerprint = %s LIMIT 1",
+                (fingerprint,),
+            )
+            return cur.fetchone() is not None
 
     def mark_sent(self, promo: Promo) -> None:
-        self.conn.execute(
-            """
-            INSERT OR IGNORE INTO sent (
-                fingerprint, channel_username, post_id, sent_at
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sent (
+                    fingerprint, channel_username, post_id, sent_at
+                )
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (fingerprint) DO NOTHING
+                """,
+                (
+                    promo.fingerprint,
+                    promo.channel_username,
+                    promo.post_id,
+                    utc_iso(),
+                ),
             )
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                promo.fingerprint,
-                promo.channel_username,
-                promo.post_id,
-                utc_iso(),
-            ),
-        )
         self.conn.commit()
 
     def close(self) -> None:
@@ -495,6 +510,47 @@ def build_product_title(text: str, offer_links: list[str]) -> str:
     return "Oferta"
 
 
+TITLE_SUFFIX_RE = re.compile(
+    r"\s*[\|\-–—:]\s*(?:Mercado Livre|Amazon\.com\.br|Amazon|Shopee|"
+    r"AliExpress|Magazine Luiza|Magalu|Americanas|Casas Bahia)\s*$",
+    re.IGNORECASE,
+)
+
+
+def fetch_title_from_link(client: "HttpClient", url: str) -> str | None:
+    """Best-effort fallback: some posts only have price/coupon/link, with
+    the product name shown solely inside the image. When that happens,
+    resolve the offer link and pull the product name from its og:title
+    (or <title>) so the Discord embed still shows a real product name
+    instead of the generic "Oferta" placeholder."""
+    try:
+        resp = client.get(url, timeout=8)
+    except Exception as exc:
+        logging.debug("Não foi possível resolver título de %s: %s", url, exc)
+        return None
+
+    try:
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception:
+        return None
+
+    for selector in ("meta[property='og:title']", "meta[name='twitter:title']"):
+        tag = soup.select_one(selector)
+        if tag and tag.get("content"):
+            candidate = clean_text(tag["content"])
+            candidate = TITLE_SUFFIX_RE.sub("", candidate).strip()
+            if candidate:
+                return candidate[:240]
+
+    if soup.title and soup.title.string:
+        candidate = clean_text(soup.title.string)
+        candidate = TITLE_SUFFIX_RE.sub("", candidate).strip()
+        if candidate:
+            return candidate[:240]
+
+    return None
+
+
 def build_product_description(
     text: str,
     title: str,
@@ -664,6 +720,13 @@ def extract_post(
 
     title = build_product_title(text, links)
     description = build_product_description(text, title, links)
+
+    # Fallback: posts que só trazem preço/cupom/link (nome do produto só
+    # aparece na imagem) caem aqui. Busca o nome real na página do link.
+    if title == "Oferta" and links:
+        fetched_title = fetch_title_from_link(client, links[0])
+        if fetched_title:
+            title = fetched_title
 
     # Only calculate a discount when the post explicitly states both prices.
     # A single "Valor: R$328" remains exactly that: current price only.
@@ -1030,7 +1093,15 @@ def run(
     max_posts: int,
 ) -> None:
     sources = load_sources()
-    db = Database(DB_PATH)
+
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL não configurada (defina nas variáveis de "
+            "ambiente do Railway ou no .env)."
+        )
+
+    db = Database(database_url)
     client = HttpClient()
     scraper = TelegramPublicScraper(client)
 
