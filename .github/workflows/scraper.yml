@@ -1,0 +1,32 @@
+name: Scraper Telegram -> Discord
+
+on:
+  schedule:
+    # Roda todo início de hora (horário UTC). Ex: 00:00, 01:00, 02:00...
+    - cron: "0 * * * *"
+  # Permite disparar manualmente pela aba "Actions" no GitHub, para testar
+  workflow_dispatch:
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar o scraper (1 ciclo)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_USERNAME: ${{ secrets.DISCORD_WEBHOOK_USERNAME }}
+        run: python telegram_public_scraper.py --once
